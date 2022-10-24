@@ -26,6 +26,11 @@ add_executable(brick_search
         src/brick_search.cpp
         )
 
+catkin_install_python(PROGRAMS
+        src/explore.py
+        DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 target_include_directories(brick_search SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS} ${catkin_INCLUDE_DIRS})
 target_include_directories(brick_search PRIVATE include)
 
