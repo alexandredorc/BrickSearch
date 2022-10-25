@@ -4,7 +4,7 @@ import rospy
 import roslib
 import math
 import cv2 as cv # OpenCV2
-from cv_bridge import CvBridge, CvBridgeError
+from cv_bridge import CvBridge
 import numpy as np
 from nav_msgs.srv import GetMap
 import tf
@@ -14,12 +14,11 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from geometry_msgs.msg import Pose2D
 from geometry_msgs.msg import Pose
 from geometry_msgs.msg import Point
+from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
-from move_base_msgs.msg import MoveBaseAction, MoveBaseActionGoal
+from move_base_msgs.msg import MoveBaseAction
 import actionlib
-import random
-import copy
-from threading import Lock
+from marker_brick import *
 
 
 
@@ -78,6 +77,9 @@ class BrickSearch:
         # Subscribe to the camera
         self.image_sub_ = rospy.Subscriber("/camera/rgb/image_raw", Image, self.image_callback, queue_size=1)
 
+        self.depth_sub_ = rospy.Subscriber("/camera/depth/image_raw", Image, self.depth_callback, queue_size=1)
+
+
         # Advertise "cmd_vel" publisher to control TurtleBot manually
         self.cmd_vel_pub_ = rospy.Publisher('cmd_vel', Twist, queue_size=1)
 
@@ -95,6 +97,7 @@ class BrickSearch:
         # Subscribe to "amcl_pose" to get pose covariance
         self.amcl_pose_sub_ = rospy.Subscriber("amcl_pose", PoseWithCovarianceStamped, self.amcl_pose_callback, queue_size=1)
 
+        self.bricks=[]
 
     def get_pose_2d(self):
 
@@ -120,7 +123,9 @@ class BrickSearch:
         return pose
 
     def amcl_pose_callback(self, pose_msg):
-
+        
+        pose=pose_msg.pose.pose
+        self.robot_pose_=[pose.position.x,pose.position.y,pose.orientation.z]
         # Check the covariance
         frobenius_norm = 0.0
 
@@ -133,31 +138,96 @@ class BrickSearch:
             # Unsubscribe from "amcl_pose" because we should only need to localise once at start up
             self.amcl_pose_sub_.unregister()
 
+    def real_coor(self,x,y,dist):
+        angle=43.5*(x-940)/940
+        angle=angle*math.pi/180+self.robot_pose_[2]
+        
+        map_frame_x=math.cos(angle) * dist +self.robot_pose_[0]
+        map_frame_y=math.sin( angle ) * dist  +self.robot_pose_[1]
+        return [map_frame_x,map_frame_y]
+
+    def depth_callback(self, depth_msg):
+        self.depth_data_=np.array(self.cv_bridge_.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough"))
 
     def image_callback(self, image_msg):
         # Use this method to identify when the brick is visible
 
+        
         # The camera publishes at 30 fps, it's probably a good idea to analyse images at a lower rate than that
-        if self.image_msg_count_ < 15:
+        if self.image_msg_count_ < 1:
             self.image_msg_count_ += 1
             return
         else:
             self.image_msg_count_ = 0
 
+        timeStamp=image_msg.header.stamp
+        
         # Copy the image message to a cv_bridge image
-        image = self.cv_bridge_.imgmsg_to_cv2(image_msg)
+        image = self.cv_bridge_.imgmsg_to_cv2(image_msg, "bgr8")
+        HSV_frame = cv.cvtColor(image, cv.COLOR_BGR2HSV)
+        low_bound=np.array([0,240,100])
+        high_bound=np.array([10,255,255])
+        mask=cv.inRange(HSV_frame, low_bound, high_bound)
 
-        # You can set "brick_found_" to true to signal to "mainLoop" that you have found a brick
-        # You may want to communicate more information
-        # Since the "image_callback" and "main_loop" methods can run at the same time you should protect any shared variables
-        # with a mutex
-        # "brick_found_" doesn't need a mutex because it's an atomic
+        elements=cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)[-2]
+        size=0
+        final_ele=None
+        for e in elements:
+            rec=cv.boundingRect(e)#find the rectangle that frames the element
+            temp=rec[2]*rec[3] #calculate the area of the frame rectangle
+            if size<temp:
+                size=temp
+                final_ele=e
+        if final_ele is not None and self.robot_pose_ is not None:
+            self.brick_found_=True
+            rec=cv.boundingRect(final_ele)
+            # get center coordinate of the element in the image
+            x=int(rec[0]+(rec[2])/2)
+            y=int(rec[1]+(rec[3])/2)
+            depth_brick=self.depth_data_[y,x]
+            brick_coord=self.real_coor(x,y,depth_brick)
+            rospy.logerr(brick_coord)
+            cv.rectangle(image, (int(rec[0]), int(rec[1])), (int(rec[0])+int(rec[2]), int(rec[3])+int(rec[1])), np.array([0,0,255]), 2)
+            cv.circle(image, (int(x), int(y)), 5, np.array([0,0,255]), 10)
+            cv.line(image, (int(x), int(y)), (int(x)+150, int(y)), np.array([0,0,255]), 2)
+            cv.putText(image, "Guider", (int(x)+10, int(y) -10), cv.FONT_HERSHEY_DUPLEX, 1, np.array([0,0,255]), 1, cv.LINE_AA)
 
-
-
+            self.manage_brick(brick_coord,timeStamp)
+        cv.imshow('Mask', mask)
+        cv.imshow('image',image)
+        cv.waitKey(2)
 
         rospy.loginfo('image_callback')
         rospy.loginfo('brick_found_: ' + str(self.brick_found_))
+
+    def manage_brick(self,coord,time):
+    
+        x=coord
+        y=coord
+
+        test =  ((math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks)
+        rospy.logerr(test)
+        if all(test):
+            self.bricks.append([x,y,1])
+            
+        else:
+            for id,aBrick in enumerate(self.bricks):
+                if math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2) < 0.40 :
+                    x=(x+aBrick[0]*9)/10
+                    y=(y+aBrick[1]*9)/10
+                    self.bricks[id][0]=x
+                    self.bricks[id][1]=y
+                    self.bricks[id][2]+=1
+
+                    if self.bricks[id][2]>1:
+                        marker(x,y,0,id+1,time)
+
+                    for id2 in range(0,id,1):
+                        dist= math.sqrt((self.bricks[id2][0]-aBrick[0])**2 + (self.bricks[id2][1]-aBrick[1])**2)
+                    
+                        if dist < 0.25 :
+                            marker_delete(aBrick,id,time)
+                            self.bricks.pop(id) 
 
     def main_loop(self):
 
@@ -181,12 +251,15 @@ class BrickSearch:
         twist.angular.z = 0.
         self.cmd_vel_pub_.publish(twist)
 
+
         # The map is stored in "map_"
         # You will probably need the data stored in "map_.info"
         # You can also access the map data as an OpenCV image with "map_image_"
+        print(np.shape(self.map_image_))
+
 
         # Here's an example of getting the current pose and sending a goal to "move_base":
-        pose_2d = self.get_pose_2d()
+        """pose_2d = self.get_pose_2d()
 
         rospy.loginfo('Current pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
 
@@ -202,7 +275,7 @@ class BrickSearch:
         action_goal.goal.target_pose.pose = pose2d_to_pose(pose_2d)
 
         rospy.loginfo('Sending goal...')
-        self.move_base_action_client_.send_goal(action_goal.goal)
+        self.move_base_action_client_.send_goal(action_goal.goal)"""
 
         # This loop repeats until ROS is shutdown
         # You probably want to put all your code in here
@@ -215,7 +288,7 @@ class BrickSearch:
 
             rospy.loginfo('action state: ' + self.move_base_action_client_.get_goal_status_text())
 
-            if state == actionlib.GoalStatus.SUCCEEDED:
+            if state == actionlib.GoalStatus.SUCCEEDED and False:
 
                 rospy.loginfo('Action succeeded!')
 
@@ -224,6 +297,7 @@ class BrickSearch:
 
             # Delay so the loop doesn't run too fast
             rospy.sleep(0.2)
+
 
 
 if __name__ == '__main__':
