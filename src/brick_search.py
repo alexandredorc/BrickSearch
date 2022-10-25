@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from pickle import TRUE
+from cv2 import resizeWindow
 import rospy
 import roslib
 import math
@@ -16,9 +18,11 @@ from geometry_msgs.msg import Pose
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
-from move_base_msgs.msg import MoveBaseAction
+from move_base_msgs.msg import MoveBaseAction, MoveBaseActionGoal
 import actionlib
 from marker_brick import *
+from sensor_msgs.msg import PointCloud2
+import ros_numpy
 
 
 
@@ -77,7 +81,7 @@ class BrickSearch:
         # Subscribe to the camera
         self.image_sub_ = rospy.Subscriber("/camera/rgb/image_raw", Image, self.image_callback, queue_size=1)
 
-        self.depth_sub_ = rospy.Subscriber("/camera/depth/image_raw", Image, self.depth_callback, queue_size=1)
+        self.depth_sub_ = rospy.Subscriber("/camera/depth/points", PointCloud2, self.depth_callback, queue_size=1)
 
 
         # Advertise "cmd_vel" publisher to control TurtleBot manually
@@ -112,13 +116,13 @@ class BrickSearch:
         pose.x = trans[0]
         pose.y = trans[1]
 
-        qw = rot[3];
-        qz = rot[2];
+        qw = rot[3]
+        qz = rot[2]
 
         if qz >= 0.:
             pose.theta = wrap_angle(2. * math.acos(qw))
         else: 
-            pose.theta = wrap_angle(-2. * math.acos(qw));
+            pose.theta = wrap_angle(-2. * math.acos(qw))
 
         return pose
 
@@ -138,16 +142,15 @@ class BrickSearch:
             # Unsubscribe from "amcl_pose" because we should only need to localise once at start up
             self.amcl_pose_sub_.unregister()
 
-    def real_coor(self,x,y,dist):
-        angle=43.5*(x-940)/940
-        angle=angle*math.pi/180+self.robot_pose_[2]
+    def real_coor(self, coord):
         
-        map_frame_x=math.cos(angle) * dist +self.robot_pose_[0]
-        map_frame_y=math.sin( angle ) * dist  +self.robot_pose_[1]
+        map_frame_x= self.robot_pose_[0] + coord[2]*np.cos(self.get_pose_2d().theta) + coord[0]*np.sin(self.get_pose_2d().theta)
+        map_frame_y= self.robot_pose_[1] - coord[0]*np.cos(self.get_pose_2d().theta) + coord[2]*np.sin(self.get_pose_2d().theta)
+
         return [map_frame_x,map_frame_y]
 
     def depth_callback(self, depth_msg):
-        self.depth_data_=np.array(self.cv_bridge_.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough"))
+        self.depth_data_= ros_numpy.point_cloud2.pointcloud2_to_array(depth_msg)
 
     def image_callback(self, image_msg):
         # Use this method to identify when the brick is visible
@@ -178,14 +181,14 @@ class BrickSearch:
             if size<temp:
                 size=temp
                 final_ele=e
-        if final_ele is not None and self.robot_pose_ is not None:
+        if final_ele is not None and self.robot_pose_ is not None and self.localised_:
             self.brick_found_=True
             rec=cv.boundingRect(final_ele)
             # get center coordinate of the element in the image
             x=int(rec[0]+(rec[2])/2)
             y=int(rec[1]+(rec[3])/2)
             depth_brick=self.depth_data_[y,x]
-            brick_coord=self.real_coor(x,y,depth_brick)
+            brick_coord=self.real_coor(depth_brick)
             rospy.logerr(brick_coord)
             cv.rectangle(image, (int(rec[0]), int(rec[1])), (int(rec[0])+int(rec[2]), int(rec[3])+int(rec[1])), np.array([0,0,255]), 2)
             cv.circle(image, (int(x), int(y)), 5, np.array([0,0,255]), 10)
@@ -193,8 +196,8 @@ class BrickSearch:
             cv.putText(image, "Guider", (int(x)+10, int(y) -10), cv.FONT_HERSHEY_DUPLEX, 1, np.array([0,0,255]), 1, cv.LINE_AA)
 
             self.manage_brick(brick_coord,timeStamp)
-        cv.imshow('Mask', mask)
-        cv.imshow('image',image)
+        cv.imshow('Mask', cv.resize(mask,(960,540)))
+        cv.imshow('image',cv.resize(image,(960,540)))
         cv.waitKey(2)
 
         rospy.loginfo('image_callback')
@@ -202,11 +205,13 @@ class BrickSearch:
 
     def manage_brick(self,coord,time):
     
-        x=coord
-        y=coord
+        x=coord[0]
+        y=coord[1]
 
-        test =  ((math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks)
-        rospy.logerr(test)
+        test =  [(math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks]
+        rospy.logwarn(type(test))
+        rospy.logwarn(test)
+        
         if all(test):
             self.bricks.append([x,y,1])
             
@@ -229,11 +234,11 @@ class BrickSearch:
                             marker_delete(aBrick,id,time)
                             self.bricks.pop(id) 
 
-    def main_loop(self):
+    def main_loop(self, loop):
 
         # Wait for the TurtleBot to localise
         rospy.loginfo('Localising...')
-        while not rospy.is_shutdown():
+        while not rospy.is_shutdown() and loop < 2:
 
             # Turn slowly
             twist = Twist()
@@ -257,29 +262,51 @@ class BrickSearch:
         # You can also access the map data as an OpenCV image with "map_image_"
         print(np.shape(self.map_image_))
 
+        rospy.loginfo('Search the Brick...')
+        while not rospy.is_shutdown() and loop < 2:
+
+            # Turn slowly
+            twist = Twist()
+            twist.angular.z = 1.
+            self.cmd_vel_pub_.publish(twist)
+
+            if self.brick_found_:
+                rospy.loginfo('Brick Found')
+                pose_2d = self.get_pose_2d()
+                rospy.sleep(0.1)
+                rospy.loginfo('Current pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
+
+                # Move forward 0.5 m
+                pose_2d.x = self.bricks[-1][0]
+                pose_2d.y = self.bricks[-1][1]
+
+                rospy.loginfo('Target pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
+
+                # Send a goal to "move_base" with "self.move_base_action_client_"
+                action_goal = MoveBaseActionGoal()
+                action_goal.goal.target_pose.header.frame_id = "map"
+                action_goal.goal.target_pose.pose = pose2d_to_pose(pose_2d)
+
+                rospy.loginfo('Sending goal...')
+                self.move_base_action_client_.send_goal(action_goal.goal)
+                
+                break
+
+            rospy.sleep(0.1)
+
+        loop += 1
+        # Stop turning
+        twist = Twist()
+        twist.angular.z = 0.
+        self.cmd_vel_pub_.publish(twist)
+
 
         # Here's an example of getting the current pose and sending a goal to "move_base":
-        """pose_2d = self.get_pose_2d()
-
-        rospy.loginfo('Current pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
-
-        # Move forward 0.5 m
-        pose_2d.x += 0.5 * math.cos(pose_2d.theta)
-        pose_2d.y += 0.5 * math.sin(pose_2d.theta)
-
-        rospy.loginfo('Target pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
-
-        # Send a goal to "move_base" with "self.move_base_action_client_"
-        action_goal = MoveBaseActionGoal()
-        action_goal.goal.target_pose.header.frame_id = "map"
-        action_goal.goal.target_pose.pose = pose2d_to_pose(pose_2d)
-
-        rospy.loginfo('Sending goal...')
-        self.move_base_action_client_.send_goal(action_goal.goal)"""
+        
 
         # This loop repeats until ROS is shutdown
         # You probably want to put all your code in here
-        while not rospy.is_shutdown():
+        while not rospy.is_shutdown() and loop < 2:
 
             rospy.loginfo('main_loop')
 
@@ -288,8 +315,8 @@ class BrickSearch:
 
             rospy.loginfo('action state: ' + self.move_base_action_client_.get_goal_status_text())
 
-            if state == actionlib.GoalStatus.SUCCEEDED and False:
-
+            if state == actionlib.GoalStatus.SUCCEEDED:
+                loop += 1
                 rospy.loginfo('Action succeeded!')
 
                 # Shutdown when done
@@ -297,6 +324,7 @@ class BrickSearch:
 
             # Delay so the loop doesn't run too fast
             rospy.sleep(0.2)
+            
 
 
 
@@ -309,7 +337,8 @@ if __name__ == '__main__':
     brick_search = BrickSearch()
 
     # Loop forever while processing callbacks
-    brick_search.main_loop()
+    loop = 0
+    brick_search.main_loop(loop)
 
 
 
