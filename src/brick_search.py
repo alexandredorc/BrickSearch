@@ -15,9 +15,10 @@ from geometry_msgs.msg import Pose2D
 from geometry_msgs.msg import Pose
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, PointCloud2
 from move_base_msgs.msg import MoveBaseAction
 import actionlib
+import ros_numpy
 from marker_brick import *
 
 
@@ -77,7 +78,7 @@ class BrickSearch:
         # Subscribe to the camera
         self.image_sub_ = rospy.Subscriber("/camera/rgb/image_raw", Image, self.image_callback, queue_size=1)
 
-        self.depth_sub_ = rospy.Subscriber("/camera/depth/image_raw", Image, self.depth_callback, queue_size=1)
+        self.depth_sub_ = rospy.Subscriber("/camera/depth/points", PointCloud2, self.depth_callback, queue_size=1)
 
 
         # Advertise "cmd_vel" publisher to control TurtleBot manually
@@ -112,13 +113,13 @@ class BrickSearch:
         pose.x = trans[0]
         pose.y = trans[1]
 
-        qw = rot[3];
-        qz = rot[2];
+        qw = rot[3]
+        qz = rot[2]
 
         if qz >= 0.:
             pose.theta = wrap_angle(2. * math.acos(qw))
         else: 
-            pose.theta = wrap_angle(-2. * math.acos(qw));
+            pose.theta = wrap_angle(-2. * math.acos(qw))
 
         return pose
 
@@ -138,16 +139,18 @@ class BrickSearch:
             # Unsubscribe from "amcl_pose" because we should only need to localise once at start up
             self.amcl_pose_sub_.unregister()
 
-    def real_coor(self,x,y,dist):
-        angle=43.5*(x-940)/940
-        angle=angle*math.pi/180+self.robot_pose_[2]
-        
-        map_frame_x=math.cos(angle) * dist +self.robot_pose_[0]
-        map_frame_y=math.sin( angle ) * dist  +self.robot_pose_[1]
-        return [map_frame_x,map_frame_y]
+    def real_coor(self,depth):
+
+        rospy.logerr(str(depth))
+        """
+        pose=self.get_pose_2d()
+        rospy.logwarn(pose.theta)
+        map_frame_x=+math.sin(pose.theta) * depth[2]+math.cos(pose.theta) * depth[0] +pose.x
+        map_frame_y=-math.cos(pose.theta) * depth[2]-math.sin(pose.theta) * depth[0] +pose.y"""
+        return [depth[2],-depth[0]]
 
     def depth_callback(self, depth_msg):
-        self.depth_data_=np.array(self.cv_bridge_.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough"))
+        self.depth_data_=ros_numpy.point_cloud2.pointcloud2_to_array(depth_msg)
 
     def image_callback(self, image_msg):
         # Use this method to identify when the brick is visible
@@ -178,14 +181,14 @@ class BrickSearch:
             if size<temp:
                 size=temp
                 final_ele=e
-        if final_ele is not None and self.robot_pose_ is not None:
+        if final_ele is not None  and self.localised_:
             self.brick_found_=True
             rec=cv.boundingRect(final_ele)
             # get center coordinate of the element in the image
             x=int(rec[0]+(rec[2])/2)
             y=int(rec[1]+(rec[3])/2)
             depth_brick=self.depth_data_[y,x]
-            brick_coord=self.real_coor(x,y,depth_brick)
+            brick_coord=self.real_coor(depth_brick)
             rospy.logerr(brick_coord)
             cv.rectangle(image, (int(rec[0]), int(rec[1])), (int(rec[0])+int(rec[2]), int(rec[3])+int(rec[1])), np.array([0,0,255]), 2)
             cv.circle(image, (int(x), int(y)), 5, np.array([0,0,255]), 10)
@@ -201,13 +204,13 @@ class BrickSearch:
         rospy.loginfo('brick_found_: ' + str(self.brick_found_))
 
     def manage_brick(self,coord,time):
-    
-        x=coord
-        y=coord
+        createPose = init_PoseStamped(coord,time)
+        transfPose = self.tf_listener_.transformPose("map", createPose )
 
-        test =  ((math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks)
-        rospy.logerr(test)
-        if all(test):
+        x=transfPose.pose.position.x
+        y=transfPose.pose.position.y
+        rospy.logwarn(coord)
+        if all((math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks):
             self.bricks.append([x,y,1])
             
         else:
@@ -219,7 +222,8 @@ class BrickSearch:
                     self.bricks[id][1]=y
                     self.bricks[id][2]+=1
 
-                    if self.bricks[id][2]>1:
+                    if self.bricks[id][2]>=1:
+                        rospy.logdebug("set marker")
                         marker(x,y,0,id+1,time)
 
                     for id2 in range(0,id,1):

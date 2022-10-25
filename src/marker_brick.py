@@ -42,7 +42,7 @@ def init_markers(x,y,z,id,time):
 
 def init_PoseStamped(coor,time):
     Pose = PoseStamped()
-    Pose.header.frame_id = 'map'
+    Pose.header.frame_id = 'camera_link'
     Pose.header.stamp= time
     Pose.pose.position.x= coor[0]
     Pose.pose.position.y= coor[1]
