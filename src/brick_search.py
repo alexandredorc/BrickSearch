@@ -142,12 +142,12 @@ class BrickSearch:
             # Unsubscribe from "amcl_pose" because we should only need to localise once at start up
             self.amcl_pose_sub_.unregister()
 
-    def real_coor(self, coord):
-        
-        map_frame_x= self.robot_pose_[0] + coord[2]*np.cos(self.get_pose_2d().theta) + coord[0]*np.sin(self.get_pose_2d().theta)
-        map_frame_y= self.robot_pose_[1] - coord[0]*np.cos(self.get_pose_2d().theta) + coord[2]*np.sin(self.get_pose_2d().theta)
-
-        return [map_frame_x,map_frame_y]
+    def brick_pixel(self, depth):
+        """
+        map_frame_x= self.get_pose_2d().x + coord[2]*np.cos(self.get_pose_2d().theta) + coord[0]*np.sin(self.get_pose_2d().theta)
+        map_frame_y= self.get_pose_2d().y - coord[0]*np.cos(self.get_pose_2d().theta) + coord[2]*np.sin(self.get_pose_2d().theta)
+        """
+        return [depth[2],-depth[0]]
 
     def depth_callback(self, depth_msg):
         self.depth_data_= ros_numpy.point_cloud2.pointcloud2_to_array(depth_msg)
@@ -181,14 +181,14 @@ class BrickSearch:
             if size<temp:
                 size=temp
                 final_ele=e
-        if final_ele is not None and self.robot_pose_ is not None and self.localised_:
+        if final_ele is not None and self.localised_:
             self.brick_found_=True
             rec=cv.boundingRect(final_ele)
             # get center coordinate of the element in the image
             x=int(rec[0]+(rec[2])/2)
             y=int(rec[1]+(rec[3])/2)
             depth_brick=self.depth_data_[y,x]
-            brick_coord=self.real_coor(depth_brick)
+            brick_coord=self.brick_pixel(depth_brick)
             rospy.logerr(brick_coord)
             cv.rectangle(image, (int(rec[0]), int(rec[1])), (int(rec[0])+int(rec[2]), int(rec[3])+int(rec[1])), np.array([0,0,255]), 2)
             cv.circle(image, (int(x), int(y)), 5, np.array([0,0,255]), 10)
@@ -204,13 +204,15 @@ class BrickSearch:
         rospy.loginfo('brick_found_: ' + str(self.brick_found_))
 
     def manage_brick(self,coord,time):
-    
-        x=coord[0]
-        y=coord[1]
+        createPose = init_PoseStamped(coord,time)
+        transfPose = self.tf_listener_.transformPose("map", createPose)
+
+        x = transfPose.pose.position.x
+        y = transfPose.pose.position.y
 
         test =  [(math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks]
-        rospy.logwarn(type(test))
-        rospy.logwarn(test)
+
+        rospy.logwarn('brick_coordinates' + str(test))
         
         if all(test):
             self.bricks.append([x,y,1])
@@ -234,11 +236,11 @@ class BrickSearch:
                             marker_delete(aBrick,id,time)
                             self.bricks.pop(id) 
 
-    def main_loop(self, loop):
+    def main_loop(self):
 
         # Wait for the TurtleBot to localise
         rospy.loginfo('Localising...')
-        while not rospy.is_shutdown() and loop < 2:
+        while not rospy.is_shutdown():
 
             # Turn slowly
             twist = Twist()
@@ -263,7 +265,7 @@ class BrickSearch:
         print(np.shape(self.map_image_))
 
         rospy.loginfo('Search the Brick...')
-        while not rospy.is_shutdown() and loop < 2:
+        while not rospy.is_shutdown():
 
             # Turn slowly
             twist = Twist()
@@ -277,8 +279,8 @@ class BrickSearch:
                 rospy.loginfo('Current pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
 
                 # Move forward 0.5 m
-                pose_2d.x = self.bricks[-1][0]
-                pose_2d.y = self.bricks[-1][1]
+                pose_2d.x = self.bricks[-1][0] - 0.5
+                pose_2d.y = self.bricks[-1][1] - 0.5
 
                 rospy.loginfo('Target pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
 
@@ -294,7 +296,7 @@ class BrickSearch:
 
             rospy.sleep(0.1)
 
-        loop += 1
+
         # Stop turning
         twist = Twist()
         twist.angular.z = 0.
@@ -306,7 +308,7 @@ class BrickSearch:
 
         # This loop repeats until ROS is shutdown
         # You probably want to put all your code in here
-        while not rospy.is_shutdown() and loop < 2:
+        while not rospy.is_shutdown():
 
             rospy.loginfo('main_loop')
 
@@ -316,7 +318,7 @@ class BrickSearch:
             rospy.loginfo('action state: ' + self.move_base_action_client_.get_goal_status_text())
 
             if state == actionlib.GoalStatus.SUCCEEDED:
-                loop += 1
+  
                 rospy.loginfo('Action succeeded!')
 
                 # Shutdown when done
@@ -337,8 +339,7 @@ if __name__ == '__main__':
     brick_search = BrickSearch()
 
     # Loop forever while processing callbacks
-    loop = 0
-    brick_search.main_loop(loop)
+    brick_search.main_loop()
 
 
 
