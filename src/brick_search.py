@@ -189,7 +189,7 @@ class BrickSearch:
             y=int(rec[1]+(rec[3])/2)
             depth_brick=self.depth_data_[y,x]
             brick_coord=self.brick_pixel(depth_brick)
-            rospy.logerr(brick_coord)
+            #rospy.logerr(brick_coord)
             cv.rectangle(image, (int(rec[0]), int(rec[1])), (int(rec[0])+int(rec[2]), int(rec[3])+int(rec[1])), np.array([0,0,255]), 2)
             cv.circle(image, (int(x), int(y)), 5, np.array([0,0,255]), 10)
             cv.line(image, (int(x), int(y)), (int(x)+150, int(y)), np.array([0,0,255]), 2)
@@ -209,13 +209,14 @@ class BrickSearch:
 
         x = transfPose.pose.position.x
         y = transfPose.pose.position.y
+        tetha = transfPose.pose.orientation.w
 
         test =  [(math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks]
 
-        rospy.logwarn('brick_coordinates' + str(test))
+        rospy.logwarn('brick_coordinates: ' + str([x,y]))
         
         if all(test):
-            self.bricks.append([x,y,1])
+            self.bricks.append([x,y,1,tetha])
             
         else:
             for id,aBrick in enumerate(self.bricks):
@@ -275,12 +276,21 @@ class BrickSearch:
             if self.brick_found_:
                 rospy.loginfo('Brick Found')
                 pose_2d = self.get_pose_2d()
-                rospy.sleep(0.1)
+                
                 rospy.loginfo('Current pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
 
-                # Move forward 0.5 m
-                pose_2d.x = self.bricks[-1][0] - 0.5
-                pose_2d.y = self.bricks[-1][1] - 0.5
+                # Move toward the brick 
+
+                rospy.sleep(0.1)
+
+                slope = (self.bricks[-1][1] - pose_2d.y)  / (self.bricks[-1][0] - pose_2d.x)
+                intercept = pose_2d.y - slope * pose_2d.x
+                
+                pose_2d.x = self.bricks[0][0] - 0.3
+                pose_2d.y = slope * pose_2d.x + intercept
+                pose_2d.theta = math.atan(slope) 
+
+                rospy.logwarn(slope)
 
                 rospy.loginfo('Target pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
 
