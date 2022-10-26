@@ -16,7 +16,7 @@ from geometry_msgs.msg import Pose
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image, PointCloud2
-from move_base_msgs.msg import MoveBaseAction
+from move_base_msgs.msg import MoveBaseAction, MoveBaseActionGoal
 import actionlib
 import ros_numpy
 from marker_brick import *
@@ -39,7 +39,7 @@ def pose2d_to_pose(pose_2d):
     pose.position.x = pose_2d.x
     pose.position.y = pose_2d.y
 
-    pose.orientation.w = math.cos(pose_2d.theta)
+    pose.orientation.w = math.cos(pose_2d.theta/2.0)
     pose.orientation.z = math.sin(pose_2d.theta / 2.0)
 
     return pose
@@ -139,15 +139,7 @@ class BrickSearch:
             # Unsubscribe from "amcl_pose" because we should only need to localise once at start up
             self.amcl_pose_sub_.unregister()
 
-    def real_coor(self,depth):
-
-        rospy.logerr(str(depth))
-        """
-        pose=self.get_pose_2d()
-        rospy.logwarn(pose.theta)
-        map_frame_x=+math.sin(pose.theta) * depth[2]+math.cos(pose.theta) * depth[0] +pose.x
-        map_frame_y=-math.cos(pose.theta) * depth[2]-math.sin(pose.theta) * depth[0] +pose.y"""
-        return [depth[2],-depth[0]]
+   
 
     def depth_callback(self, depth_msg):
         self.depth_data_=ros_numpy.point_cloud2.pointcloud2_to_array(depth_msg)
@@ -181,23 +173,23 @@ class BrickSearch:
             if size<temp:
                 size=temp
                 final_ele=e
-        if final_ele is not None  and self.localised_:
+        if final_ele is not None and self.localised_:
             self.brick_found_=True
             rec=cv.boundingRect(final_ele)
             # get center coordinate of the element in the image
             x=int(rec[0]+(rec[2])/2)
             y=int(rec[1]+(rec[3])/2)
             depth_brick=self.depth_data_[y,x]
-            brick_coord=self.real_coor(depth_brick)
-            rospy.logerr(brick_coord)
+            brick_coord=[depth_brick[2]+0.05,-depth_brick[0]]
+
             cv.rectangle(image, (int(rec[0]), int(rec[1])), (int(rec[0])+int(rec[2]), int(rec[3])+int(rec[1])), np.array([0,0,255]), 2)
             cv.circle(image, (int(x), int(y)), 5, np.array([0,0,255]), 10)
             cv.line(image, (int(x), int(y)), (int(x)+150, int(y)), np.array([0,0,255]), 2)
             cv.putText(image, "Guider", (int(x)+10, int(y) -10), cv.FONT_HERSHEY_DUPLEX, 1, np.array([0,0,255]), 1, cv.LINE_AA)
 
             self.manage_brick(brick_coord,timeStamp)
-        cv.imshow('Mask', mask)
-        cv.imshow('image',image)
+        cv.imshow('Mask', cv.resize(mask,(960,540)))
+        cv.imshow('image',cv.resize(image,(960,540)))
         cv.waitKey(2)
 
         rospy.loginfo('image_callback')
@@ -205,11 +197,11 @@ class BrickSearch:
 
     def manage_brick(self,coord,time):
         createPose = init_PoseStamped(coord,time)
-        transfPose = self.tf_listener_.transformPose("map", createPose )
+        transfPose = self.tf_listener_.transformPose("map", createPose)
 
         x=transfPose.pose.position.x
         y=transfPose.pose.position.y
-        rospy.logwarn(coord)
+
         if all((math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks):
             self.bricks.append([x,y,1])
             
@@ -223,7 +215,6 @@ class BrickSearch:
                     self.bricks[id][2]+=1
 
                     if self.bricks[id][2]>=1:
-                        rospy.logdebug("set marker")
                         marker(x,y,0,id+1,time)
 
                     for id2 in range(0,id,1):
@@ -261,25 +252,57 @@ class BrickSearch:
         # You can also access the map data as an OpenCV image with "map_image_"
         print(np.shape(self.map_image_))
 
+        rospy.loginfo('Search the Brick...')
+        while not rospy.is_shutdown():
+
+            # Turn slowly
+            twist = Twist()
+            twist.angular.z = 0.3
+            self.cmd_vel_pub_.publish(twist)
+
+            while self.brick_found_:
+                rospy.loginfo('Brick Found')
+                pose_2d = self.get_pose_2d()
+                
+                rospy.loginfo('Current pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
+
+                # Move toward the brick 
+
+                rospy.sleep(0.1)
+
+                slope = ( self.bricks[-1][1]-pose_2d.y )  / ( self.bricks[-1][0]-pose_2d.x )
+                
+                
+                pose_2d.theta = math.atan(slope) 
+                pose_2d.x = self.bricks[-1][0] -0.5*math.cos(pose_2d.theta)
+                pose_2d.y = self.bricks[-1][1] -0.5*math.sin(pose_2d.theta) 
+                rospy.loginfo(str(self.bricks[-1]))
+                rospy.logwarn(slope)
+                rospy.logwarn(pose_2d.theta)
+
+                rospy.loginfo('Target pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
+
+                # Send a goal to "move_base" with "self.move_base_action_client_"
+                action_goal = MoveBaseActionGoal()
+                action_goal.goal.target_pose.header.frame_id = "map"
+                action_goal.goal.target_pose.pose = pose2d_to_pose(pose_2d)
+
+                rospy.loginfo('Sending goal...')
+                self.move_base_action_client_.send_goal(action_goal.goal)
+                
+                break
+
+            rospy.sleep(0.1)
+
+
+        # Stop turning
+        twist = Twist()
+        twist.angular.z = 0.
+        self.cmd_vel_pub_.publish(twist)
+
 
         # Here's an example of getting the current pose and sending a goal to "move_base":
-        """pose_2d = self.get_pose_2d()
-
-        rospy.loginfo('Current pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
-
-        # Move forward 0.5 m
-        pose_2d.x += 0.5 * math.cos(pose_2d.theta)
-        pose_2d.y += 0.5 * math.sin(pose_2d.theta)
-
-        rospy.loginfo('Target pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
-
-        # Send a goal to "move_base" with "self.move_base_action_client_"
-        action_goal = MoveBaseActionGoal()
-        action_goal.goal.target_pose.header.frame_id = "map"
-        action_goal.goal.target_pose.pose = pose2d_to_pose(pose_2d)
-
-        rospy.loginfo('Sending goal...')
-        self.move_base_action_client_.send_goal(action_goal.goal)"""
+        
 
         # This loop repeats until ROS is shutdown
         # You probably want to put all your code in here
@@ -292,8 +315,8 @@ class BrickSearch:
 
             rospy.loginfo('action state: ' + self.move_base_action_client_.get_goal_status_text())
 
-            if state == actionlib.GoalStatus.SUCCEEDED and False:
-
+            if state == actionlib.GoalStatus.SUCCEEDED:
+  
                 rospy.loginfo('Action succeeded!')
 
                 # Shutdown when done

@@ -29,5 +29,6 @@
     <remap from="odom" to="$(arg odom_topic)"/>
   </node>
 
+  <node pkg="brick_search" type="explore.py" name="get_frontier"/>
 
 </launch>
