@@ -260,7 +260,7 @@ class BrickSearch:
             twist.angular.z = 0.3
             self.cmd_vel_pub_.publish(twist)
 
-            while self.brick_found_:
+            if self.brick_found_:
                 rospy.loginfo('Brick Found')
                 pose_2d = self.get_pose_2d()
                 
