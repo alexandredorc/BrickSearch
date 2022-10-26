@@ -271,9 +271,10 @@ class BrickSearch:
                 rospy.sleep(0.1)
 
                 slope = ( self.bricks[-1][1]-pose_2d.y )  / ( self.bricks[-1][0]-pose_2d.x )
-                
-                
-                pose_2d.theta = math.atan(slope) 
+                add=0
+                if (self.bricks[-1][0]-pose_2d.x)<0:
+                    add=math.pi
+                pose_2d.theta = math.atan(slope) +add
                 pose_2d.x = self.bricks[-1][0] -0.5*math.cos(pose_2d.theta)
                 pose_2d.y = self.bricks[-1][1] -0.5*math.sin(pose_2d.theta) 
                 rospy.loginfo(str(self.bricks[-1]))
