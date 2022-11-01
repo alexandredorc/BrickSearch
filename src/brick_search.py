@@ -287,8 +287,8 @@ class BrickSearch:
                 pose_2d.theta = math.atan(slope) +add
 
                 #set the goal coordinate
-                pose_2d.x = self.bricks[-1][0] -0.6*math.cos(pose_2d.theta)
-                pose_2d.y = self.bricks[-1][1] -0.6*math.sin(pose_2d.theta)
+                pose_2d.x = self.bricks[-1][0] -0.8*math.cos(pose_2d.theta)
+                pose_2d.y = self.bricks[-1][1] -0.8*math.sin(pose_2d.theta)
 
                 rospy.loginfo(str(self.bricks[-1]))
                 rospy.logwarn(slope)
@@ -302,6 +302,7 @@ class BrickSearch:
                 action_goal.goal.target_pose.pose = pose2d_to_pose(pose_2d)
 
                 rospy.loginfo('Sending goal...')
+                self.move_base_action_client_.cancel_all_goals()
                 self.move_base_action_client_.send_goal(action_goal.goal)
                 
                 break
@@ -331,9 +332,11 @@ class BrickSearch:
 
                 # Shutdown when done
                 #rospy.signal_shutdown('Action succeeded!')
+                break
 
             # Delay so the loop doesn't run too fast
             rospy.sleep(0.2)
+
 
 
 
@@ -346,7 +349,8 @@ if __name__ == '__main__':
     brick_search = BrickSearch()
 
     # Loop forever while processing callbacks
-    brick_search.main_loop()
+    while True:
+        brick_search.main_loop()
 
 
 
