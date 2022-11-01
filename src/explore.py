@@ -28,6 +28,7 @@ class Frontier:
         width=map_msg.info.width
         map_ex=np.reshape(np.array(map_msg.data),(width,height))
         map_front=np.zeros((width,height))
+        # check if the pixel is a frontier pixel
         for i in range(width):
             for j in range(height):
                 if map_ex[i,j]==0:
@@ -50,11 +51,14 @@ class Frontier:
 
         size_max=0
         final_ele=None
+        # find the biggest element
         for e in elements:
             x,y,w,h = cv2.boundingRect(e)
             if w>12 or h>12 and size_max<w*h:
                 size_max=w*h
                 final_ele=e
+
+        # if a element is found
         if final_ele is not None:
             x,y,w,h = cv2.boundingRect(final_ele)
             x=x+w/2
@@ -63,13 +67,13 @@ class Frontier:
             radius = 2
             cv2.circle(image_front,center,radius,(0,255,0),2)
             pose = Pose()
-            
+            # create navigation goal
             pose.position.x = (x-width/2)*res -0.5
             pose.position.y = (y-height/2)*res -0.5
 
             pose.orientation.w = 1
             pose.orientation.z = 0
-     
+            # send the goal to the navigation node
             action_goal = MoveBaseActionGoal()
             action_goal.goal.target_pose.header.frame_id = "map"
             action_goal.goal.target_pose.pose = pose
@@ -79,7 +83,7 @@ class Frontier:
         cv2.waitKey(3)
                        
 
-        
+# initialize the exploration node
 if __name__ =="__main__":
     rospy.init_node('get_frontier', anonymous=True)
     front=Frontier()
