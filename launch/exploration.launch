@@ -26,7 +26,7 @@
     <remap from="odom" to="$(arg odom_topic)"/>
   </node>
 
-  <!-- frontier_exploration -->
+  <!-- Autonomous explore_lite package -->
   <include file="$(find explore_lite)/launch/explore.launch"/>
 
 </launch>

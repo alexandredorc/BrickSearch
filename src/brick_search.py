@@ -13,7 +13,6 @@ from geometry_msgs.msg import Twist
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from geometry_msgs.msg import Pose2D
 from geometry_msgs.msg import Pose
-from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image, PointCloud2
 from move_base_msgs.msg import MoveBaseAction, MoveBaseActionGoal
@@ -75,9 +74,9 @@ class BrickSearch:
         while not rospy.is_shutdown() and not self.tf_listener_.canTransform("map", "base_link", rospy.Time(0.)):
             rospy.sleep(0.1)
 
-        # Subscribe to the camera
+        # Subscribe to the camera to get image
         self.image_sub_ = rospy.Subscriber("/camera/rgb/image_raw", Image, self.image_callback, queue_size=1)
-
+        # Subscribe to the camera to get the depth data into pointcloud
         self.depth_sub_ = rospy.Subscriber("/camera/depth/points", PointCloud2, self.depth_callback, queue_size=1)
 
 
@@ -214,7 +213,7 @@ class BrickSearch:
                     self.bricks[id][1]=y
                     self.bricks[id][2]+=1
 
-                    if self.bricks[id][2]>=1:
+                    if self.bricks[id][2]>=2:
                         marker(x,y,0,id+1,time)
 
                     for id2 in range(0,id,1):
@@ -303,11 +302,7 @@ class BrickSearch:
         self.cmd_vel_pub_.publish(twist)
 
 
-        # Here's an example of getting the current pose and sending a goal to "move_base":
-        
-
         # This loop repeats until ROS is shutdown
-        # You probably want to put all your code in here
         while not rospy.is_shutdown():
 
             rospy.loginfo('main_loop')

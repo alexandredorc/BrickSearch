@@ -1,18 +1,10 @@
-import math, rospy
-from geometry_msgs.msg import Twist
-import cv2
-import numpy as np
+import rospy
 from visualization_msgs.msg import Marker
-from geometry_msgs.msg import Pose, PoseStamped
+from geometry_msgs.msg import  PoseStamped
 
 commandPublisher = rospy.Publisher(
     '/brick',
     Marker, queue_size=10
-)
-
-commandPublisherPoint = rospy.Publisher(
-    '/trace',
-    Marker, queue_size=100
 )
 
 def init_markers(x,y,z,id,time):
@@ -64,11 +56,3 @@ def marker_delete(coor,id,time):
     delete_brick=init_markers(coor[0],coor[1],0,id,time)
     delete_brick.action=Marker.DELETE
     commandPublisher.publish(delete_brick)
-    
-def marker_Points(x,y,z,id,time):
-    brick= init_markers(x,y,z,id,time)
-    brick.type = 8
-    brick.color.r=1
-    brick.color.g=0
-    brick.scale.z=0.1
-    commandPublisherPoint.publish(brick)
