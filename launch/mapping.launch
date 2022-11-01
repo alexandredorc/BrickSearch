@@ -9,7 +9,5 @@
         <arg name="model" value="$(arg model)" />
     </include>
 
-    <!-- AMCL -->
-    <include file="$(find turtlebot3_navigation)/launch/amcl.launch"/>
 
 </launch>

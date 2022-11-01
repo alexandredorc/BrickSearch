@@ -185,7 +185,7 @@ class BrickSearch:
             cv.rectangle(image, (int(rec[0]), int(rec[1])), (int(rec[0])+int(rec[2]), int(rec[3])+int(rec[1])), np.array([0,0,255]), 2)
             cv.circle(image, (int(x), int(y)), 5, np.array([0,0,255]), 10)
             cv.line(image, (int(x), int(y)), (int(x)+150, int(y)), np.array([0,0,255]), 2)
-            cv.putText(image, "Guider", (int(x)+10, int(y) -10), cv.FONT_HERSHEY_DUPLEX, 1, np.array([0,0,255]), 1, cv.LINE_AA)
+            cv.putText(image, "Brick-", (int(x)+10, int(y) -10), cv.FONT_HERSHEY_DUPLEX, 1, np.array([0,0,255]), 1, cv.LINE_AA)
 
             self.manage_brick(brick_coord,timeStamp)
         cv.imshow('Mask', cv.resize(mask,(960,540)))
@@ -207,7 +207,7 @@ class BrickSearch:
             
         else:
             for id,aBrick in enumerate(self.bricks):
-                if math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2) < 0.40 :
+                if math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2) < 0.70 :
                     x=(x+aBrick[0]*9)/10
                     y=(y+aBrick[1]*9)/10
                     self.bricks[id][0]=x
@@ -257,7 +257,7 @@ class BrickSearch:
 
             # Turn slowly
             twist = Twist()
-            twist.angular.z = 0.3
+            twist.angular.z = 0.8
             self.cmd_vel_pub_.publish(twist)
 
             if self.brick_found_:
@@ -275,8 +275,9 @@ class BrickSearch:
                 if (self.bricks[-1][0]-pose_2d.x)<0:
                     add=math.pi
                 pose_2d.theta = math.atan(slope) +add
-                pose_2d.x = self.bricks[-1][0] -0.5*math.cos(pose_2d.theta)
-                pose_2d.y = self.bricks[-1][1] -0.5*math.sin(pose_2d.theta) 
+
+                pose_2d.x = self.bricks[-1][0] -0.4*math.cos(pose_2d.theta)
+                pose_2d.y = self.bricks[-1][1] -0.4*math.sin(pose_2d.theta) 
                 rospy.loginfo(str(self.bricks[-1]))
                 rospy.logwarn(slope)
                 rospy.logwarn(pose_2d.theta)
@@ -321,7 +322,7 @@ class BrickSearch:
                 rospy.loginfo('Action succeeded!')
 
                 # Shutdown when done
-                rospy.signal_shutdown('Action succeeded!')
+                #rospy.signal_shutdown('Action succeeded!')
 
             # Delay so the loop doesn't run too fast
             rospy.sleep(0.2)
