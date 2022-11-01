@@ -139,7 +139,7 @@ class BrickSearch:
             self.amcl_pose_sub_.unregister()
 
    
-
+    # Get pointcloud from depth camera
     def depth_callback(self, depth_msg):
         self.depth_data_=ros_numpy.point_cloud2.pointcloud2_to_array(depth_msg)
 
@@ -154,6 +154,7 @@ class BrickSearch:
         else:
             self.image_msg_count_ = 0
 
+        # Get time stamp of the image
         timeStamp=image_msg.header.stamp
         
         # Copy the image message to a cv_bridge image
@@ -161,32 +162,38 @@ class BrickSearch:
         HSV_frame = cv.cvtColor(image, cv.COLOR_BGR2HSV)
         low_bound=np.array([0,240,100])
         high_bound=np.array([10,255,255])
+        # Get mask of the image 
         mask=cv.inRange(HSV_frame, low_bound, high_bound)
 
+        # get coutours of different elements from the mask
         elements=cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)[-2]
         size=0
         final_ele=None
+
         for e in elements:
-            rec=cv.boundingRect(e)#find the rectangle that frames the element
-            temp=rec[2]*rec[3] #calculate the area of the frame rectangle
-            if size<temp:
+            rec=cv.boundingRect(e)# Find the rectangle that frames the element
+            temp=rec[2]*rec[3] # Calculate the area of the frame rectangle
+            if size<temp: # Get the biggest element
                 size=temp
                 final_ele=e
         if final_ele is not None and self.localised_:
             self.brick_found_=True
             rec=cv.boundingRect(final_ele)
+
             # get center coordinate of the element in the image
             x=int(rec[0]+(rec[2])/2)
             y=int(rec[1]+(rec[3])/2)
             depth_brick=self.depth_data_[y,x]
             brick_coord=[depth_brick[2]+0.05,-depth_brick[0]]
 
+            # Display information on image
             cv.rectangle(image, (int(rec[0]), int(rec[1])), (int(rec[0])+int(rec[2]), int(rec[3])+int(rec[1])), np.array([0,0,255]), 2)
             cv.circle(image, (int(x), int(y)), 5, np.array([0,0,255]), 10)
             cv.line(image, (int(x), int(y)), (int(x)+150, int(y)), np.array([0,0,255]), 2)
-            cv.putText(image, "Brick-", (int(x)+10, int(y) -10), cv.FONT_HERSHEY_DUPLEX, 1, np.array([0,0,255]), 1, cv.LINE_AA)
+            cv.putText(image, "Brick", (int(x)+10, int(y) -10), cv.FONT_HERSHEY_DUPLEX, 1, np.array([0,0,255]), 1, cv.LINE_AA)
 
             self.manage_brick(brick_coord,timeStamp)
+        # Display image and mask
         cv.imshow('Mask', cv.resize(mask,(960,540)))
         cv.imshow('image',cv.resize(image,(960,540)))
         cv.waitKey(2)
@@ -194,16 +201,20 @@ class BrickSearch:
         rospy.loginfo('image_callback')
         rospy.loginfo('brick_found_: ' + str(self.brick_found_))
 
+    # function that manage the brick in the environment 
     def manage_brick(self,coord,time):
         createPose = init_PoseStamped(coord,time)
+        # Transform the pose to map frame
         transfPose = self.tf_listener_.transformPose("map", createPose)
 
         x=transfPose.pose.position.x
         y=transfPose.pose.position.y
 
-        if all((math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.3 for aBrick in self.bricks):
+        # check if the brick is different from already registered bricks
+        if all((math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2))>0.7 for aBrick in self.bricks):
             self.bricks.append([x,y,1])
-            
+        
+        # If the brick already exist
         else:
             for id,aBrick in enumerate(self.bricks):
                 if math.sqrt((x-aBrick[0])**2 + (y-aBrick[1])**2) < 0.70 :
@@ -213,9 +224,11 @@ class BrickSearch:
                     self.bricks[id][1]=y
                     self.bricks[id][2]+=1
 
-                    if self.bricks[id][2]>=2:
+                    # Display marker in Rviz
+                    if self.bricks[id][2]>=5:
                         marker(x,y,0,id+1,time)
 
+                    # Fuse the markers if really close
                     for id2 in range(0,id,1):
                         dist= math.sqrt((self.bricks[id2][0]-aBrick[0])**2 + (self.bricks[id2][1]-aBrick[1])**2)
                     
@@ -234,6 +247,7 @@ class BrickSearch:
             twist.angular.z = 1.
             self.cmd_vel_pub_.publish(twist)
 
+            # When the robot is localised then we break the loop
             if self.localised_:
                 rospy.loginfo('Localised')
                 break
@@ -245,28 +259,25 @@ class BrickSearch:
         twist.angular.z = 0.
         self.cmd_vel_pub_.publish(twist)
 
-
-        # The map is stored in "map_"
-        # You will probably need the data stored in "map_.info"
-        # You can also access the map data as an OpenCV image with "map_image_"
         print(np.shape(self.map_image_))
 
         rospy.loginfo('Search the Brick...')
-        while not rospy.is_shutdown():
 
-            # Turn slowly
-            twist = Twist()
-            twist.angular.z = 0.8
-            self.cmd_vel_pub_.publish(twist)
+        # Turn slowly to see the brick
+        twist = Twist()
+        twist.angular.z = 0.8
+        self.cmd_vel_pub_.publish(twist)
+
+        while not rospy.is_shutdown():
 
             if self.brick_found_:
                 rospy.loginfo('Brick Found')
+                # get brick position
                 pose_2d = self.get_pose_2d()
                 
                 rospy.loginfo('Current pose: ' + str(pose_2d.x) + ' ' + str(pose_2d.y) + ' ' + str(pose_2d.theta))
 
                 # Move toward the brick 
-
                 rospy.sleep(0.1)
 
                 slope = ( self.bricks[-1][1]-pose_2d.y )  / ( self.bricks[-1][0]-pose_2d.x )
@@ -275,8 +286,10 @@ class BrickSearch:
                     add=math.pi
                 pose_2d.theta = math.atan(slope) +add
 
-                pose_2d.x = self.bricks[-1][0] -0.4*math.cos(pose_2d.theta)
-                pose_2d.y = self.bricks[-1][1] -0.4*math.sin(pose_2d.theta) 
+                #set the goal coordinate
+                pose_2d.x = self.bricks[-1][0] -0.6*math.cos(pose_2d.theta)
+                pose_2d.y = self.bricks[-1][1] -0.6*math.sin(pose_2d.theta)
+
                 rospy.loginfo(str(self.bricks[-1]))
                 rospy.logwarn(slope)
                 rospy.logwarn(pose_2d.theta)
