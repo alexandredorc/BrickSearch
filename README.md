@@ -1,5 +1,11 @@
 # UTS assignment 3: Group Project: Where’s Wally the Brick?
 
+After cloning this directory into `catin_ws/src/` the catkin workspace need to be build.
+
+> cd ~/catkin_ws/src
+
+> catkin build
+
 For all tasks it it necessary to initialize the gazebo simulation, by doing the following command in a console.
 
 > roslaunch brick_search brick_search.launch
